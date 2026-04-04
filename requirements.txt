@@ -1,0 +1,10 @@
+numpy>=1.24
+scipy>=1.10
+scikit-image>=0.21
+tifffile>=2023.1.1
+skan>=0.11
+networkx>=3.1
+pandas>=2.0
+matplotlib>=3.7
+opencv-python>=4.8
+cellpose>=4.0
