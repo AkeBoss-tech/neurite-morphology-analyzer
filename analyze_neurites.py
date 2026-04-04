@@ -101,6 +101,12 @@ def _extract_2d(image: np.ndarray, channel: Optional[int]) -> np.ndarray:
     if ndim == 2:
         return image.astype(np.float32)
 
+    # 3D Z-stack without channel dim: (Z, H, W) where Z << H, W
+    if ndim == 3 and shape[0] < shape[1] and shape[0] < shape[2] and shape[0] < 64:
+        log.info("  3D Z-stack detected (%s), max-projecting over Z", shape)
+        image = image.max(axis=0)
+        return _normalize(image.astype(np.float32))
+
     if ndim == 3:
         # Decide layout: (H, W, C) vs (C, H, W)
         # Heuristic: if last dim is small (≤4) and others are larger → channel-last
@@ -153,6 +159,7 @@ class NeuriteAnalyzer:
         neurite_threshold: float = 0.01,
         min_neurite_length: float = 10.0,
         save_viz: bool = True,
+        use_cellpose: bool = True,
     ):
         self.image_dir = Path(image_dir)
         self.output_dir = Path(output_dir)
@@ -166,6 +173,7 @@ class NeuriteAnalyzer:
         self.neurite_threshold = neurite_threshold
         self.min_neurite_length = min_neurite_length
         self.save_viz = save_viz
+        self.use_cellpose = use_cellpose and CELLPOSE_AVAILABLE
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -233,7 +241,7 @@ class NeuriteAnalyzer:
         otherwise falls back to Laplacian-of-Gaussian blob detection.
         Returns list of dicts: {y, x, radius, mean_intensity}.
         """
-        if CELLPOSE_AVAILABLE:
+        if self.use_cellpose:
             return self._detect_soma_cellpose(image)
         return self._detect_soma_blob(image)
 
@@ -383,7 +391,9 @@ class NeuriteAnalyzer:
             return self._build_graph_fallback(skeleton)
 
     def _build_graph_skan(self, skeleton: np.ndarray):
-        skel_obj = Skeleton(skeleton.astype(bool), spacing=self.pixel_size_um)
+        # Use spacing=1 so coordinates are always in pixels (not µm).
+        # We scale branch-distance to µm ourselves below.
+        skel_obj = Skeleton(skeleton.astype(bool), spacing=1.0)
         try:
             branch_df = skan_summarize(skel_obj, separator="-")
         except TypeError:
@@ -409,10 +419,13 @@ class NeuriteAnalyzer:
                 else:
                     branch_df[r] = np.nan
 
-        # Filter short branches
+        # Filter short branches (branch-distance is still in pixels at this point)
         branch_df = branch_df[
             branch_df["branch-distance"] >= self.min_neurite_length
         ].reset_index(drop=True)
+
+        # Convert branch-distance from pixels → µm
+        branch_df["branch-distance"] = branch_df["branch-distance"] * self.pixel_size_um
 
         log.info("  Skeleton: %d branches after filtering", len(branch_df))
         return skel_obj, branch_df
@@ -597,7 +610,7 @@ class NeuriteAnalyzer:
         skeleton: np.ndarray,
         branch_df: pd.DataFrame,
         measurements: list[dict],
-        G: nx.Graph,
+        all_graphs: list,          # list[nx.Graph], one per soma
         output_path: Path,
     ) -> None:
         """Save 3-panel annotated figure."""
@@ -623,16 +636,26 @@ class NeuriteAnalyzer:
             skel_rgba[skeleton, 1] = 1.0
             skel_rgba[skeleton, 3] = 0.85
             axes[1].imshow(skel_rgba)
-        # Branch points and tips
-        if not branch_df.empty and G.number_of_nodes() > 0:
-            junctions = [(n[0], n[1]) for n in G.nodes if G.degree(n) >= 3]
-            tips = [(n[0], n[1]) for n in G.nodes if G.degree(n) == 1]
-            if junctions:
-                jy, jx = zip(*junctions)
-                axes[1].scatter(jx, jy, c="red", s=12, zorder=5, label="Branch pts")
-            if tips:
-                ty, tx = zip(*tips)
-                axes[1].scatter(tx, ty, c="yellow", s=12, zorder=5, label="Tips")
+        # Branch points and tips — collected per soma sub-graph so degrees are correct.
+        # Merging sub-graphs would corrupt degrees at Voronoi boundary nodes.
+        all_junctions_y, all_junctions_x = [], []
+        all_tips_y, all_tips_x = [], []
+        for G_i in all_graphs:
+            for n in G_i.nodes:
+                d = G_i.degree(n)
+                if d >= 3:
+                    all_junctions_y.append(n[0])
+                    all_junctions_x.append(n[1])
+                elif d == 1:
+                    all_tips_y.append(n[0])
+                    all_tips_x.append(n[1])
+        if all_junctions_x:
+            axes[1].scatter(all_junctions_x, all_junctions_y,
+                            c="red", s=12, zorder=5, label="Branch pts")
+        if all_tips_x:
+            axes[1].scatter(all_tips_x, all_tips_y,
+                            c="yellow", s=12, zorder=5, label="Tips")
+        if all_junctions_x or all_tips_x:
             axes[1].legend(fontsize=7, loc="upper right")
         axes[1].set_title("Skeleton + Detections", fontsize=11)
         axes[1].axis("off")
@@ -754,16 +777,11 @@ class NeuriteAnalyzer:
             if parts:
                 viz_branch_df = pd.concat(parts, ignore_index=True)
 
-        # Combined graph for visualization (junction/tip overlay)
-        viz_G = nx.Graph()
-        for G_i in all_graphs:
-            viz_G.update(G_i)
-
-        # Visualization
+        # Visualization — pass individual soma graphs so tip/junction degrees are correct
         if self.save_viz:
             viz_path = self.output_dir / (path.stem + "_analyzed.png")
             self.save_visualization(
-                soma_prep, soma_list, skeleton, viz_branch_df, measurements, viz_G, viz_path
+                soma_prep, soma_list, skeleton, viz_branch_df, measurements, all_graphs, viz_path
             )
 
         return self.results_to_dataframe(measurements, path.name)
@@ -892,11 +910,6 @@ def main():
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    if args.no_cellpose and CELLPOSE_AVAILABLE:
-        import analyze_neurites as _self
-        _self.CELLPOSE_AVAILABLE = False
-        log.info("Cellpose disabled — using blob_log fallback")
-
     analyzer = NeuriteAnalyzer(
         image_dir=args.image_dir,
         output_dir=args.output_dir,
@@ -909,6 +922,7 @@ def main():
         neurite_threshold=args.neurite_threshold,
         min_neurite_length=args.min_branch_length,
         save_viz=not args.no_visualization,
+        use_cellpose=not args.no_cellpose,
     )
 
     results = analyzer.run()
