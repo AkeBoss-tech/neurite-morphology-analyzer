@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "napari-neurite-morphology"
+version = "0.1.0"
+description = "Napari plugin for automated neurite morphology analysis from fluorescence microscopy images"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+classifiers = [
+    "Framework :: napari",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+dependencies = [
+    "napari>=0.4.18",
+    "magicgui",
+    "qtpy",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "tifffile>=2023.1.1",
+    "skan>=0.11",
+    "networkx>=3.1",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "opencv-python>=4.8",
+]
+
+[project.optional-dependencies]
+cellpose = ["cellpose>=4.0"]
+testing = [
+    "pytest",
+    "pytest-qt",
+    "napari[testing]",
+]
+
+[project.entry-points."napari.manifest"]
+napari-neurite-morphology = "napari_neurite_morphology:napari.yaml"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"napari_neurite_morphology" = ["napari.yaml"]
