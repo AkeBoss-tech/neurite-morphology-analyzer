@@ -18,6 +18,7 @@ import pandas as pd
 from qtpy.QtCore import Qt, QThread, Signal
 from qtpy.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
@@ -115,7 +116,6 @@ class NeuriteWidget(QWidget):
         layer_form = QFormLayout()
         layer_group.setLayout(layer_form)
 
-        from qtpy.QtWidgets import QComboBox
         self._soma_combo = QComboBox()
         self._soma_combo.setToolTip(
             "Image layer to use for soma (cell-body) detection."

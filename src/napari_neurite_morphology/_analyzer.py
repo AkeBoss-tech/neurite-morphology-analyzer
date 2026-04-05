@@ -9,7 +9,6 @@ Can be used as a library (accepting numpy arrays) or via the CLI wrapper
 
 import logging
 import warnings
-from collections import deque  # noqa: F401 – kept for potential downstream use
 from pathlib import Path
 from typing import Optional
 
