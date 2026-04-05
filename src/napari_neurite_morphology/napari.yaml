@@ -1,0 +1,20 @@
+name: napari-neurite-morphology
+display_name: Neurite Morphology Analyzer
+contributions:
+  commands:
+    - id: napari-neurite-morphology.analyze_widget
+      title: Open Neurite Morphology Analyzer
+      python_name: napari_neurite_morphology._widget:NeuriteWidget
+    - id: napari-neurite-morphology.get_reader
+      title: Read TIFF (Neurite Analyzer)
+      python_name: napari_neurite_morphology._reader:napari_get_reader
+  widgets:
+    - command: napari-neurite-morphology.analyze_widget
+      display_name: Neurite Morphology Analyzer
+      autogenerate: false
+  readers:
+    - command: napari-neurite-morphology.get_reader
+      accepts_directories: false
+      filename_patterns:
+        - "*.tif"
+        - "*.tiff"
